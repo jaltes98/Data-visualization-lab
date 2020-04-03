@@ -1,0 +1,613 @@
+---
+title: "Data processing and visualization lab"
+author: "Joan Altes Depares"
+date: "03/04/2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# R project
+
+In this project two datasets will be analysed in order to extract some conclusions. The intention is to create some nice plots in order to visualize the data in the dataset using `ggplot2`. To do so, dataset format will have to be changed in order to match intended plots. Several packages will be used to achieve this.
+
+
+```{r, message=FALSE,warning=FALSE}
+library(readxl)
+library(dplyr)
+library(plyr)
+library(tidyr)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(ggmosaic)
+library(gganimate)
+library(gifski)
+library(gtable)
+library(gridExtra)
+library(data.table)
+library(moonBook)
+library(webr)
+library(maptools)
+library(mapproj)
+library(knitr)
+library(kableExtra)
+```
+
+Datasets are from Ebola breakout in 2014 and from GAM (Global Acute Malnutrition) prevalence in some regions of Africa. First, data is imported and summarized.  
+
+## GAM nutrition
+
+Dataset is opened and its head is displayed (using `kableExtra` and `knitr` libraries)
+
+
+```{r,warning=FALSE}
+#Open GAM nutrition dataset
+gam_nutrition <- read_excel("sahel_countries_gam_nutrition_admin1_summary_latest_surveys.xlsx", col_types = c("text", "text", "text", "text", "text", "text", "numeric", "text", "text", "numeric"))
+
+
+#First exploration
+df <- head(gam_nutrition)
+
+
+#Display nicely
+df<-kable(df,format='markdown',align = c("cc"))
+df<-column_spec(df, 1:2, width = "3cm", bold = TRUE, italic = TRUE, border_right=T)
+df<-row_spec(df,row=0,hline_after=T)
+df
+```
+
+
+As we can see, there are some things that are not too nice. For instance, column names are not too clear, some varibales are in french, some columns do not add any information and there is one row that all of it is a missing value (in order to see all this other methods like `summarise` or `table` must be used, but there is no point in printing them here). All this is fixed below.
+
+```{r,warning=FALSE}
+#Change col names
+colnames(gam_nutrition)[c(1,8,10)] <- c("Country",'Survey',"Prevalence")
+
+
+#Rename variables so they are in english
+gam_nutrition$Season <- revalue(gam_nutrition$Season,
+                                c('Soudure'='Shortage','Post-Recoltes'='Post-Harvest',
+                                  'Post-recoltes'='Post-Harvest','Autre'=NA))
+
+
+#Remove useless variable
+gam_nutrition <- subset(gam_nutrition, select = -c(CNTRY_CODE,ADM1_NAME,ADM1_CODE,Rowcacode1,Comments))
+
+
+#Remove NA (if Year is missing)
+gam_nutrition <- gam_nutrition[!is.na(gam_nutrition$Year),]
+
+```
+
+
+As first exploratory analysis, we can visualize the contents of our dataset by making some boxplots. This 5 variable summary gives a pretty good impression of how the data looks like considering that quartiles are not much affected by extreme values. First, a boxplots per country and year are done, then only per year and then per season (it would make sense than GAM prevalence during shortage is higher). `y` aesthetic will be GAM prevalence in all plots, `x` will be either year or year or season and on the first plot a facet by country will be added. A scatterplot will be added as well (with position set to `jitter` to avoid overlap) for better understanding of the data (similar to this we could have a violin plot which also shows distribution). Plots will be combined into one using `ggarrange`. As the plot is quite big we will define `fig.heig=7` in the chunk.
+
+```{r,warning=FALSE,fig.height=7}
+
+#Define theme, we will use it for most plots
+my_theme <-   theme(title=element_text(size=8,face='bold'),
+                    axis.title=element_text(size=10),
+                    axis.text.x = element_text(face='bold',color = '#575757'),
+                    axis.ticks.x = element_line(size=10),
+                    panel.background = element_blank(),
+                    panel.grid.major.y=element_line(color='#c7c7c7'),
+                    panel.grid.major.x=element_blank(),
+                    strip.background=element_rect(fill='#575757'),
+                    strip.text.x=element_text(face='bold',color = 'white'),
+                    legend.key=element_rect(fill='white',colour = '#575757'))
+
+
+#Map year onto x, GAM prevalence onto y, facet wrap by country
+p1 <- ggplot(gam_nutrition,aes(x=factor(Year),y=Prevalence))+
+  facet_wrap(~Country,scales='free_x',ncol=5)+
+  geom_boxplot(width=0.3,alpha=0)+
+  geom_jitter(width=0.1,col='#6aa2fc',alpha=0.6)+
+  labs(x='Year',y='p(GAM)',title = 'GAM prevalence across countries and years') +
+  my_theme
+  
+
+#Map year onto x, GAM prevalence onto y
+p2 <- ggplot(gam_nutrition,aes(x=factor(Year),y=Prevalence))+
+  geom_boxplot(width=0.3,alpha=0)+
+  geom_jitter(width=0.1,col='#6aa2fc',alpha=0.6)+
+  labs(x='Year',y='p(GAM)',title = 'GAM prevalence by year') +
+  my_theme
+
+
+#Map season onto x, GAM prevalence onto y
+p3 <- ggplot(data=subset(gam_nutrition, !is.na(Season)),aes(x=factor(Season),y=Prevalence))+
+  geom_boxplot(width=0.3,alpha=0)+
+  geom_jitter(width=0.1,col='#6aa2fc',alpha=0.6)+
+  labs(x='Season',y='p(GAM)',title = 'GAM prevalence by season') +
+  my_theme
+
+
+#displaying both plots together
+p <- ggarrange(p1,ggarrange(p2,p3,ncol=2,labels=c('B','C'),widths = c(2,1)),heights = c(2,1),
+               nrow=2,labels = "A")
+annotate_figure(p,top=text_grob('\nGAM prevalence dataset visualization\n',face='bold'))
+
+```
+
+
+As we can see in this plot by the number of points, data is not equally distributed within the dataset. Pie charts are quite good to see distributions and `PieDonut` allows to combine a pie chart and a donut chart with very few lines of code. In here we can see the distribution of years in the dataset as well as season. Rows that are missing whether is shortage or post-harvest are excluded.
+
+```{r,warning=FALSE}
+#Distribution of years and season within the dataset
+PieDonut(gam_nutrition[!is.na(gam_nutrition$Season),],aes(pies=Year,donuts=Season),
+         pieLabelSize=2,donutLabelSize = 2,
+         title='Year and season distribution')
+
+```
+
+
+## Ebola
+
+Same procedure as before is done.
+
+```{r,warning=FALSE}
+#Open Ebola dataset
+ebola <- read_excel("ebola_data_db_format.xlsx", col_types = c("text", "text", "text", "numeric"))
+
+
+#Explore
+df <- head(ebola)
+
+
+#Display
+df<-kable(df,format='markdown',align = c("cc"))
+df<-column_spec(df, 1:2, width = "3cm", bold = TRUE, italic = TRUE, border_right=T)
+df<-row_spec(df,row=0,hline_after=T)
+df
+```
+
+As we can see data is now distributed by date and country in long format. Using some exploration like `table(ebola$Indicator)` we can see that there are many indicators that do not add much information (variables in the last days or case fatality rates which can be extracted from the cumulative numbers). For dates we can see that they are displayed as `string` so we need to set them to `date`. There are some countries repeated which we will just drop and for simplicity some country names are substituted for its acronym. All this is solved below.
+
+```{r,warning=FALSE}
+#Convert date to acutal date
+ebola$Date <- as.Date(ebola$Date, "%Y-%m-%d")
+
+
+#Remove Repeated countries and rename long ones
+ebola <- subset(ebola, !(Country %in% c('Guinea 2','Liberia 2')))
+ebola$Country <- revalue(ebola$Country,c('United Kingdom'='UK','United States of America'='USA'))
+
+
+#Keep only cumulative values (confirmed, confirmed + suspected + probable)
+tokeep <- c('Cumulative number of confirmed Ebola cases' ,
+'Cumulative number of confirmed Ebola deaths' ,
+'Cumulative number of confirmed, probable and suspected Ebola cases' ,
+'Cumulative number of confirmed, probable and suspected Ebola deaths')
+ebola_ind <- ebola[ebola$Indicator %in% tokeep,]
+
+
+#Create another subset with just two indicators (cases - deaths)
+ebola_2 <- ebola[ebola$Indicator %in% c('Cumulative number of confirmed, probable and suspected Ebola cases' ,
+                                        'Cumulative number of confirmed, probable and suspected Ebola deaths'),]
+```
+
+In order to see how the data looks like we can focuse on countries and see its maximum value per country (as some countries have way more cases than others). To do so, we order them by value and then drop rows with duplicate countries.
+
+```{r, warning=FALSE}
+#See highest values
+ebola_country <- ebola_ind[order(ebola_ind$value,decreasing = T),]
+df <- ebola_country[!duplicated(ebola_country$Country),]
+
+
+df<-kable(df,format='markdown',align = c("cc"))
+df<-column_spec(df, 1:2, width = "3cm", bold = TRUE, italic = TRUE, border_right=T)
+df<-row_spec(df,row=0,hline_after=T)
+df
+```
+
+There are clearly two trends in the dataset: countries with a lot of cases and countries with few cases. Based on this we will separate the dataset in two. For countries with many cases we will plot its evolution in time so all data must be kept. For coutries with few cases we will just keep last data. We also keep a dataset with all countries so we can manually calculate fatality rates.
+
+```{r, warning=FALSE}
+#Select cumulative cases from top countries only
+ebola_high <- subset(ebola_ind, Country %in% c('Guinea','Liberia','Sierra Leone'))
+
+
+#Version of the dataset with only 2 indicators (Deaths, Reccovered)
+#Data is turned to wide so it can be renamed without writing the names of the indicators (which are too long)
+ebola_high2 <- pivot_wider(ebola_high,names_from = Indicator,values_from = value) 
+colnames(ebola_high2)[c(3,5)]<-c('Cases','Deaths')
+ebola_high2$Recoveries <- ebola_high2$Cases - ebola_high2$Deaths
+ebola_high2 <- select(ebola_high2,c(Country,Date,Recoveries,Deaths))
+ebola_high2 <- pivot_longer(ebola_high2,cols=c('Recoveries','Deaths'),names_to = 'Indicator')
+
+
+#Same but low countries and turn to wide format
+ebola_low <- subset(ebola_2, !(Country %in% c('Guinea','Liberia','Sierra Leone')))
+
+
+#All countries and turn to wide format
+ebola_all <- pivot_wider(ebola_2, names_from = Indicator, values_from = value)
+colnames(ebola_all)[c(3,4)] <- c('Cases',"Deaths")
+
+
+#Select last values from each country
+ebola_all <- ebola_all[order(ebola_all$Date,decreasing = T),]
+ebola_all <- ebola_all[!duplicated(ebola_all$Country),]
+
+
+#Subset countries with low cases
+ebola_low <- subset(ebola_all, !(Country %in% c('Guinea','Liberia','Sierra Leone')))
+ebola_low <- pivot_longer(ebola_low,cols=c('Cases','Deaths'),names_to = 'Indicator')
+
+
+#Create recovered and proportion variable and delete cases
+ebola_all$Recovered <- ebola_all$Cases - ebola_all$Deaths 
+ebola_all$prop <- ebola_all$Deaths/ebola_all$Cases
+ebola_all <- subset(ebola_all,select = - Cases)
+ebola_all <- pivot_longer(ebola_all,cols=c('Recovered','Deaths'),names_to = 'Indicator')
+```
+
+This took quite a while but will make life much easier for the actual plots. First one is quite tricky as `x` aesthetic corresponds to date and it must be treated as so. Second and third are quite similar but with positions set to `dodge` and `fill`, respectively and ordered according to different variables. 
+
+```{r,warning=FALSE,fig.height=7}
+#Plot cumulative cases along time for high cases countries
+p1 <- ggplot(ebola_high,aes(Date,value,col=Indicator))+
+  facet_wrap(~Country,scales='free_x')+
+  geom_line(size=1.2) + 
+  guides(col=guide_legend(nrow=1,byrow=TRUE,title.position="top"))+
+  scale_y_log10()+
+  scale_x_date(breaks = seq.Date(from=as.Date("2014-08-29"),to=as.Date("2016-03-23"),length.out = 5),
+               date_labels = "%b%Y")+
+  scale_color_brewer(labels=c("Confirmed cases ", "Confirmed deaths ", "Suspected cases ",'Suspected deaths '))+
+  labs(y=expression(Cases~(log[10]~scale)),title = 'Countries with many cases')+
+  my_theme + theme(legend.position = 'bottom',
+                   axis.ticks.x = element_line(size=0.5),
+                   axis.text.x=element_text(angle=45,hjust=1),
+                   axis.title.x = element_blank(),
+                   axis.line.x = element_line(color = '#575757',size=1))
+
+
+#Plot max values in columns for countries with few cases
+p2 <- ggplot(ebola_low,aes(x=reorder(Country,-value),y=value,fill=Indicator))+
+  geom_col(position='dodge')+
+  scale_fill_manual(values = c('#a6c8ff','#d10000'))+
+  scale_y_continuous(breaks = c(0,1,5,10,20))+
+  labs(title='Countries with few cases as of 2016-03-23',y=element_blank(),x='Country')+
+  my_theme + theme(axis.text.x=element_text(angle=45,hjust=1),
+                   axis.title.x = element_blank(),
+                   legend.title=element_blank())
+
+
+#Plot proportions (ordered by CFR) for all countries
+p3 <- ggplot(ebola_all,aes(x=reorder(Country,-prop),y=value,fill=Indicator))+
+  geom_col(position='fill')+
+  scale_fill_manual(values = c('#d10000','#ffed61'))+
+  scale_y_continuous(breaks = c(0,1,5,10,20))+
+  labs(title='  Fatality rate by country',y=element_blank(),x='Country')+
+  my_theme + theme(axis.text.x=element_text(angle=45,hjust=1),
+                   axis.title.x = element_blank(),
+                   axis.text.y = element_blank(),
+                   panel.grid.major.y = element_blank(),
+                   axis.ticks.y = element_blank(),
+                   legend.title=element_blank())
+
+#Arrange them
+p <- ggarrange(p1,ggarrange(p2,p3,ncol=2,labels=c('B','C')),heights = c(1.75,1),
+               nrow=2,labels = "A")
+annotate_figure(p,top=text_grob('\nEbola dataset visualization\n',face='bold'))
+```
+
+Note that axis are missaligned which is not too nice and could be solved using `cowplot` and `egg` packages. In **C** it can be visualized that fatality varies a lot within countries which leads to think that cases data is missing. We can also see that there must be some artifacts in the data as cumulative cases for top countries go down at some point which goes against the nature of cumulative cases. To get a better look at time series we can animate it using `gganimate`. To display it in `R Markdown` we save it and display it inmediately after using `![](ebola.gif)`, but it will only work in `html`.
+
+```{r, warning=FALSE,message=FALSE}
+#Recover p1 and add transition according to date + countinuous scale
+p_anim <- p1 + scale_y_continuous()+
+  labs(y='Cases')+
+  transition_reveal(Date,range=NULL)
+
+
+#Save plot
+anim_save('ebola.gif',p_anim)
+```
+
+![](ebola.gif)
+
+Getting rid of the log scale and animating it helps see how number of cases explodes at the begining and later reaches a plateau. Similar to this and nice as well we can have an stacked area chart with deaths and recoveries. This clearly shows that at some point Liberia data stops being recolected.
+
+```{r,warning=FALSE}
+ggplot(ebola_high2,aes(Date,value,fill=Indicator))+
+  facet_wrap(~Country,scales='free_x')+
+  geom_area(alpha=.9) + 
+  guides(col=guide_legend(nrow=1,byrow=TRUE,title.position="top"))+
+  scale_x_date(breaks = seq.Date(from=as.Date("2014-08-29"),to=as.Date("2016-03-23"),length.out = 5),
+               date_labels = "%b%Y")+
+  scale_fill_brewer(palette='Spectral',direction = -1)+
+  labs(title = 'Countries with many cases')+
+  my_theme + theme(legend.position = 'bottom',
+                   axis.ticks.x = element_line(size=0.5),
+                   axis.text.x=element_text(angle=45,hjust=1),
+                   axis.title.x = element_blank(),
+                   axis.line.x = element_line(color = '#575757',size=1))
+```
+
+Similar to the pie charts from earlier we can build donut charts, but this time from scratch using `coor_polar`. In here we'll display the distribution of deaths and cases and see that it is unequal so there must be unreported cases.
+
+```{r,warning=FALSE}
+ggplot(ebola_all,aes(x=1,y=value,fill=Country))+
+  geom_col(position = 'fill')+
+  facet_grid(.~Indicator)+
+  xlim(-0.5,1.5)+
+  coord_polar(theta = 'y') +
+  theme_void() + theme(strip.text.x = element_text(face = 'bold',size=20))
+```
+
+## Combine both datasets
+
+In order to combine both datasets first we need to make sure that they contain the same columns. We want that in both datasets there is only one observation per year and country, and we want to have the data in long format (`Indicator`-`value`).
+
+For the Ebola dataset, we will start from `ebola_2` (only two indicators) order it by date and create a new column with year (instead of date). Then we will remove duplicates based on indicator, country and year (hence only last update value is kept for each country, year and indicator).
+
+```{r,warning=FALSE}
+#Create new column with Year in Ebola 2 dataset and delete Date
+ebola_out <- ebola_2[order(ebola_2$Date,decreasing = T),]
+ebola_out$Year <- as.numeric(substring(ebola_out$Date,1,4))
+ebola_out <- select(ebola_out,-Date)
+
+#Remove duplicated based on Country, Indicator and Year (which is ordered)
+ebola_out <- ebola_out[!duplicated(ebola_out[c(1,2,4)]),]
+```
+
+For GAM dataset, however, we do not want to keep the last point as it is not a cumulative variable. Instead, we will keep the median for each year and country (as it is more meaningful that the mean). To do so, `dataframe` is converted to `data.table` to take advantatge of the `list` function. Prior to that we delete the useless survey column and assing shortage season to all rows for Cameroon 2014 (all of them have it but one). Indicator column is added to match Ebola dataset.
+
+```{r,warning=FALSE}
+#Prepare dataset
+gam_out <- select(gam_nutrition,-Survey)
+gam_out$Season[gam_out$Country=='Cameroon' & gam_out$Year==2011] <- 'Shortage'
+
+
+#Turn to data.table to easily perform median per year and country
+gam_out <- as.data.table(gam_out)
+gam_out <- gam_out[,list(value= median(Prevalence)),c('Country','Season','Year')]
+gam_out$Indicator <- 'p_GAM'
+
+
+#Remove season column (keep it as will reassign it later)
+season <- gam_out$Season
+gam_out <- select(gam_out,-Season)
+```
+
+Now the data is ready to be merged, but before that we can take a look at the GAM dataset from a different perspective now that we have median values. For instance, a Dumbbell chart is great to visualize the change of a variable over time. It works specifically well whenever you have just two points and no missing data, which is not the case but it is still great to visualize change in data. In here I manually set the color label between `'g'` (good) when there was a decrease in GAM prevalence and `'b'` (bad) when there was an increase for the `geom_line` layer but for a larger dataset this process could be automated.
+```{r,warning=FALSE}
+#Order dataset and add change column to differentiate increase from decrease
+gam_change <- gam_out
+gam_change <- gam_change[order(gam_change$Year,gam_change$value,decreasing = T),]
+gam_change$change <- c('NA','NA','NA','g','NA','NA','NA','NA','b','NA','b','g','b','b','b','b')
+
+
+#Map country onto y, pGAM onto x, year onto fill, change onto col
+#geom_point with shape 21 so its fill that matters
+#Rewrite theme as x and y are changed from usual
+ggplot(gam_change,aes(y=reorder(Country,-value),x=value,fill=factor(Year),group=Country,col=change))+
+  geom_line(size=1.2,alpha=0.5)+
+  geom_point(size=3,shape=21,col='transparent') +
+  scale_fill_brewer(palette = 'RdGy')+
+  scale_color_manual(values=c('#960012','#025e00','transparent'),guide='none')+
+  labs(title='GAM prevalence per country over years',x='GAM prevalence (%)',
+       y=element_blank(),fill='Year')+
+  theme(title=element_text(size=8,face='bold'),
+                       axis.title=element_text(size=10),
+                       axis.text.y  = element_text(face='bold',color = '#575757'),
+                       axis.ticks.y = element_line(size=7),
+                       panel.background = element_blank(),
+                       panel.grid.major.x=element_line(color='#c7c7c7'),
+                       panel.grid.major.y=element_blank(),
+                       strip.background=element_rect(fill='#575757'),
+                       strip.text.x=element_text(face='bold',color = 'white'),
+                       legend.key=element_rect(fill='white'))
+```
+
+Other interesting plots to make are mosaic plots. Basic mosaic plots show the distribution of data according to two variables (even though you can get more using facets). Using `ggmosaic` it is really easy to get them and is is using `ggplot2`. However, for statistical analysis it is usefull to map onto col the Pearsons residuals, hence statistically seeing what groups are under/over represented. This can be easily done using `vcd::mosaic` but this method is not compatible with `ggplot2` and hence in order to use it we must code it from scratch. As in here the statistical analysis will not add much information a basic mosaic plot will do. We will turn the GAM prevalence column to categorical by splitting it in three groups (low, medium, high) and combine it with season.
+```{r,warning=FALSE}
+#Turn GAM variable to categorical and add season
+gam_cat <- gam_out
+gam_cat$Season <- season
+gam_cat$Cat <- cut(gam_cat$value, 
+                   breaks=c(-Inf, 5, 10, Inf), 
+                   labels=c("low","middle","high"))
+
+
+#Create mosaic plot with ggplot2 and ggmosaic
+ggplot(data = gam_cat) +
+  geom_mosaic(aes(x = product(Cat, Season), fill=Cat), na.rm=TRUE) + 
+  labs(x = "Season", title='Data distribution per season',
+       y = 'GAM prevalence',fill='GAM prevalence')+
+  my_theme + theme(panel.grid.major.y = element_blank(),
+                   axis.ticks.x = element_blank(),
+                   axis.ticks.y= element_blank(),
+                   axis.text = element_text(face = 'bold'))
+```
+
+
+It is time now to merge both datasets. The `bind_rows` method stacks them by columns that are the same. Afterwards we only need to convert it to wide format and add the `season` column we saved earlier (plus `NA` for all other countries). We also create a subset with rows that have no missing values.
+
+```{r,warning=FALSE}
+#rbind both datasets by columns that match
+data <- bind_rows(gam_out,ebola_out)
+
+
+#Turn to wide format, rename and add season
+data <- pivot_wider(data, names_from = Indicator, values_from = value)
+colnames(data)[c(4,5)] <- c('Ebola_Cases',"Ebola_Deaths")
+data$Season <- c(season,rep(NA,length(data$Country)-length(season)))
+
+
+#subset complete columns
+data_complete <- data[!(is.na(data$p_GAM)|is.na(data$Ebola_Cases)),]
+
+```
+
+Shamefully we only get three observations that are complete but we will work with that. Even if it will not matter too much as we get few data we can try to observe a relationship between Ebola breakout and GAM prevalence, as there might be a correlation (not causation) with a common root being poverty. First we try to see time relationship by plotting GAM prevalence against time and mapping as well the number of Ebola cases onto size (the bigger the more cases), and add a text layer as well so we can get rid of the legend. Similarly, we plot Ebola deaths against Ebola cases and map GAM prevalence onto size. Finally, we compare GAM prevalence to Ebola mortality (deaths/cases), mapping season to color and add a trend line (which does not distinguish groups).
+
+```{r,warning=FALSE}
+#GAM against year, size onto Ebola, col onto Country + text
+p1 <- ggplot(data_complete,aes(x=factor(Year),y=p_GAM,fill=Country))+
+  geom_point(aes(size=Ebola_Cases),shape=21,alpha=0.5,col='transparent')+
+  scale_size(range=c(10,20))+
+  ylim(0,15)+
+  geom_text(aes(label=Country),fontface='bold',vjust=-0.5,col='#242424') + 
+  geom_text(aes(label=Ebola_Cases),vjust=.7,)+
+  geom_text(aes(label=Ebola_Deaths),subset(data_complete,Ebola_Deaths>0),vjust=1.8,
+            fontface='bold',col='#750c00')+
+  guides(size = guide_legend(override.aes = list(size = 0.2)),
+         col=guide_legend(override.aes = list(size = 0)))+
+  labs(title = 'GAM prevalence and Ebola cases\nby year and country',
+       x='Year',
+       y='GAM prevalence')+
+  annotate('text',x=1.5,y=2,label='Ebola Cases',size=3.1)+
+  annotate('text',x=1.5,y=1,label='Ebola Deaths',fontface='bold',col='#750c00',size=3.05)+
+  my_theme + theme(axis.ticks.x = element_line(size = 30),
+                   legend.position = 'none')
+
+
+#Ebola deaths against cases, pGAM onto size and country onto col + text
+p2 <- ggplot(data_complete,aes(x=Ebola_Cases,y=Ebola_Deaths,fill=Country))+
+  geom_point(aes(size=p_GAM),shape=21,alpha=0.5,col='transparent')+
+  scale_size(range=c(5,15))+
+  xlim(-4,25)+
+  scale_y_continuous(limits=c(-1,10),breaks = c(0,5,10))+
+  geom_text(aes(label=Country),fontface='bold',vjust=-0.5,col='#242424',size=3) + 
+  geom_text(aes(label=p_GAM),vjust=.7,size=3)+
+  guides(size = F,
+         fill=FALSE)+
+  labs(title = 'Ebola cases and deaths\ncompared to GAM prevalence',
+       x='Ebola cases',
+       y='Ebola Deaths')+
+  my_theme + theme(panel.grid.major.x = element_line(color='#c7c7c7'),
+                   axis.ticks.x=element_line(size=.5),
+                   axis.text = element_text(face = 'bold'),
+                   panel.border = element_rect(colour = "black", fill=NA, size=1),
+                   legend.position = 'bottom')
+
+
+#pGAM against Ebola mortality. Points distinguish by season, trend line does not
+p3 <- ggplot(data_complete,aes(x=100*(Ebola_Deaths/Ebola_Cases),y=p_GAM))+
+  geom_point(aes(col=Season))+
+  geom_smooth(method = 'lm',se=F,col='#a14600')+
+  scale_color_brewer(palette='Dark2')+
+  xlim(-1,80)+
+  ylim(-1,15)+
+  labs(title = 'GAM prevalence and Ebola\nmortality by season',
+       x='Ebola mortality (%)',
+       y='GAM prevalence (%)')+
+  guides(color=guide_legend(title.position = 'top'))+
+  my_theme + theme(panel.grid.major.x = element_line(color='#c7c7c7'),
+                   axis.ticks.x=element_line(size=.5),
+                   axis.text = element_text(face = 'bold'),
+                   panel.border = element_rect(colour = "black", fill=NA, size=1),
+                   legend.position = 'bottom')
+p <- ggarrange(p1,p2,p3,nrow = 1,labels=c('A','B','C'))
+annotate_figure(p,top=text_grob('\nEbola and GAM datasets intersection visualization\n',face='bold'))
+```
+
+These plots are not too informative as they have so few points but we can still check the trends. From plot A and B we could say that there is no relationship between GAM prevalence and Ebola cases. From plot C however we could say that there is some correlation between GAM prevalence and Ebola mortality, which we could attribute to the fact that poor countries do not have the resources to treat Ebola patients. Still, these are just assumptions as we lack data. 
+
+## Map plots
+
+Some key factor we have not explored here is the geographical distribution of the data which is especially relevant for the Ebola dataset. To explore it we will be plotting maps and adding a representation of the variables. Using `maptools` we can load `wrld_simpl` which contains information from all the world and select the region corresponding to Africa. This object will be `Formal Class SpatialPolygonsDataFrame` (SP), and it contains a `data` variable with all countries and its centroids coordinates as well as a `polygons` variable that contains the coordinates for plotting countries boundaries.
+
+```{r,warning=FALSE}
+#Load World data and select Africa
+data(wrld_simpl)
+afr=wrld_simpl[wrld_simpl$REGION==2,]
+```
+
+In here, we will make two different plots. For the first one we will use plot a circle in each country with Ebola cases, the size being the number of cases. This is pretty straight-forward as we can use the centroids from the `data` section to map the points. For the second plot we will colour the countries according to its GAM prevalence which is a bit trickier as we need to use the polygons and hence we need to convert the `polygons` variable to a dataframe which we can do using `fortify`. In both cases it is needed to relate it to our data which can be easily done considering country name. For Ebola data we will stick to 2016 and for GAM to 2014 (as they are the years with more observations).
+
+```{r,warning=FALSE, message=FALSE}
+#Convert 'data' to dataframe
+afr_df <- data.frame(afr)
+names(afr_df)[names(afr_df)=="LON"]<-"x"
+names(afr_df)[names(afr_df)=="LAT"]<-"y"
+
+
+#Select data from 2016 and Ebola not NA
+data_2016 <- subset(data,Year==2016,!is.na(Ebola_Cases))
+
+
+#Initialize an Ebola column in afr_df
+afr_df$Ebola <- NA
+
+
+#Fill the Ebola column according to countries
+for (i in 1:length(afr_df$NAME)){
+  for (j in 1:length(data_2016$Country)){
+    if (toString(afr_df$NAME[i])==data_2016$Country[j]){
+      afr_df$Ebola[i] <- data_2016$Ebola_Deaths[j]
+    }
+  }
+}
+
+
+#Convert 'polygon' to dataframe
+afr_f <- fortify(afr)
+
+
+#Subset data from 2014 and not null p_GAM
+data_2014 <- subset(data,Year==2014)
+data_2014 <- subset(data_2014,!is.na(p_GAM))
+
+
+#Create a country column from country ID and substitute by Name (only needed ones is enough)
+afr_f$Country <- afr_f$id
+afr_f$Country <- revalue(afr_f$Country,c('TCD'='Chad','CMR'='Cameroon',
+                                         'BFA'='Burkina Faso','MRT'='Mauritania',
+                                         'NGA'='Nigeria','SEN'='Senegal',
+                                         'NER'='Niger'))
+
+
+#Initialize p_GAM column in afr_f
+afr_f$p_GAM <- NA
+
+
+#Fill p_GAM column according to countries
+for (i in 1:length(afr_f$Country)){
+  for (j in 1:length(data_2014$Country)){
+    if (afr_f$Country[i]==data_2014$Country[j]){
+      afr_f$p_GAM[i] <- data_2014$p_GAM[j]
+    }
+  }
+}
+```
+
+Datasets being ready the only thing that is left is plot it by using `x=long` (longitude), `y=lat` (latitude) and `group=group` (otherwise ggplot will not know how points relate to countries) within `geom_polygon`. It is important to add `coord_map` as well. To remove all non-ink data using `theme_void` looks nice.
+
+```{r,warning=FALSE,message=FALSE}
+#Add geom_point to centroids with size according to Ebola cases
+p1 <- ggplot()+
+  geom_polygon(data=afr,aes(x=long,y=lat,group=group))+
+  geom_point(data=afr_df, aes(x=x, y=y,size=Ebola), color="red",alpha=0.5)+
+  scale_size(breaks = c(10,2000,4000),range=c(3,10))+
+  coord_map()+
+  labs(size='Ebola Deaths',title = 'Ebola in Africa in 2016')+
+  theme_void()
+
+
+#Add geom_polygon with fill according to p_GAM (with viridis color range which is really visual)
+p2 <- ggplot()+
+  geom_polygon(data=afr_f,aes(x=long,y=lat,fill=p_GAM,group=group))+
+  coord_map()+
+  scale_fill_viridis_c()+
+  labs(fill='GAM\nprevalence (%)',title = 'GAM in Africa in 2014')+
+  theme_void()
+
+
+#Add both plots together
+ggarrange(p1,p2,labels=c('A','B'))
+```
+
+This geospatial visualization is quite informative and we can clearly see that there is no relation at all between Ebola cases and GAM prevalence in these datasets, even though there might be some in real life as many data is missing. If we had more data it would be nice to make map animations and visualize time evolution.
+
+
+
+
+
